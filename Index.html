@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Performance Review Cloud - Sales Trainer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    
+    <!-- Firebase Compat Libraries (Avoiding module scope issues) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore-compat.js"></script>
+    
+    <!-- Alpine.js (Loaded last to ensure functions are defined) -->
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #0f172a; color: #f8fafc; overflow-x: hidden; }
+        .glass-card { background: rgba(30, 41, 59, 0.7); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 1rem; }
+        .kpi-row:hover { background: rgba(59, 130, 246, 0.05); }
+        [x-cloak] { display: none !important; }
+        .btn-action { @apply flex items-center gap-2 px-3 py-1.5 rounded-lg text-[10px] font-bold uppercase transition-all duration-200 active:scale-95; }
+        .week-input { background: transparent; border: none; width: auto; text-align: left; color: inherit; font-weight: bold; outline: none; }
+        .table-input { background: rgba(15, 23, 42, 0.5); border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 2px 6px; color: white; width: 60px; text-align: center; }
+        .table-input:focus { border-color: #3b82f6; outline: none; background: rgba(15, 23, 42, 0.8); }
+        .auth-overlay { position: fixed; inset: 0; background: #0f172a; z-index: 100; display: flex; align-items: center; justify-content: center; }
+        .loader { border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #3b82f6; border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body x-data="performanceApp()" x-init="initApp()">
+
+    <div x-show="!isLoggedIn" class="auth-overlay bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-slate-950">
+        <div class="glass-card p-8 w-full max-w-md border-t-4 border-blue-500 shadow-2xl mx-4">
+            <div class="text-center mb-8">
+                <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-2xl font-bold mx-auto mb-4 shadow-lg shadow-blue-500/20">
+                    PR
+                </div>
+                <h1 class="text-2xl font-black text-white" x-text="authMode === 'login' ? 'Selamat Datang' : 'Buat Akun Baru'"></h1>
+                <p class="text-slate-400 text-sm mt-1">Sistem Manajemen Performa Cloud</p>
+            </div>
+
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Email</label>
+                    <input type="email" x-model="authForm.email" class="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                </div>
+                <div>
+                    <label class="block text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-1">Password</label>
+                    <input type="password" x-model="authForm.password" class="w-full bg-slate-900/50 border border-slate-700 rounded-xl px-4 py-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none transition-all">
+                </div>
+
+                <div x-show="errorMessage" class="bg-red-500/10 border border-red-500/50 text-red-400 text-xs p-3 rounded-lg" x-text="errorMessage"></div>
+
+                <button @click="handleAuth()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 rounded-xl shadow-lg shadow-blue-500/20 transition-all flex items-center justify-center gap-3">
+                    <span x-show="isLoading" class="loader"></span>
+                    <span x-text="isLoading ? 'Memproses...' : (authMode === 'login' ? 'Masuk Sekarang' : 'Daftar Akun')"></span>
+                </button>
+
+                <div class="text-center mt-6">
+                    <button @click="authMode = authMode === 'login' ? 'signup' : 'login'; errorMessage = ''" class="text-xs text-blue-400 hover:text-blue-300 font-medium">
+                        <span x-text="authMode === 'login' ? 'Belum punya akun? Daftar di sini' : 'Sudah punya akun? Login di sini'"></span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <main x-show="isLoggedIn" x-cloak class="p-4 md:p-8 max-w-7xl mx-auto">
+        <header class="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-6">
+            <div class="flex items-center gap-5">
+                <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-2xl font-bold shadow-lg shadow-blue-500/20" x-text="getInitials()"></div>
+                <div>
+                    <div class="flex items-center gap-3">
+                        <input type="text" x-model="employee.name" @input="debouncedSave()" class="bg-transparent border-none text-2xl font-black tracking-tight text-white focus:ring-1 focus:ring-blue-500 rounded px-1 w-full outline-none">
+                        <button @click="logout()" class="text-slate-500 hover:text-red-400 p-1" title="Keluar">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line></svg>
+                        </button>
+                    </div>
+                    <div class="flex items-center gap-3 mt-1">
+                        <input type="text" x-model="employee.position" @input="debouncedSave()" class="bg-blue-500/20 text-blue-400 text-[10px] font-bold uppercase rounded px-2 py-0.5 border-none focus:ring-1 focus:ring-blue-500 outline-none">
+                        <span class="text-slate-500 text-xs">Reviewer: 
+                            <input type="text" x-model="employee.supervisor" @input="debouncedSave()" class="bg-transparent border-none text-slate-300 font-bold focus:ring-1 focus:ring-blue-500 rounded px-1 outline-none w-32">
+                        </span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="flex items-center gap-4 bg-slate-800/50 p-2 rounded-2xl border border-slate-700">
+                <div class="px-4 py-2 text-center border-r border-slate-700">
+                    <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Total Score</p>
+                    <p class="text-2xl font-black text-blue-400" x-text="totalScore.toFixed(2)"></p>
+                </div>
+                <div class="px-4 py-2 text-center min-w-[100px]">
+                    <p class="text-[10px] text-slate-500 font-bold uppercase tracking-widest">Status Simpan</p>
+                    <div class="flex items-center justify-center gap-1 mt-1">
+                        <div class="w-2 h-2 rounded-full" :class="isSaving ? 'bg-orange-400 animate-pulse' : 'bg-emerald-400'"></div>
+                        <span class="text-[10px] font-bold text-slate-400" x-text="isSaving ? 'Menyimpan...' : 'Tersimpan'"></span>
+                    </div>
+                </div>
+            </div>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-12 gap-8">
+            <div class="lg:col-span-8 space-y-8">
+                <div class="glass-card overflow-hidden">
+                    <div class="p-5 border-b border-slate-800 flex flex-wrap justify-between items-center bg-slate-800/30 gap-4">
+                        <h3 class="font-bold text-sm uppercase tracking-widest text-slate-400">
+                            KPI Breakdown - <input type="text" x-model="weekLabel" @input="debouncedSave()" class="week-input text-blue-400 focus:ring-1 focus:ring-blue-500 rounded px-1" placeholder="Periode W1">
+                        </h3>
+                        <div class="flex items-center gap-2">
+                            <button @click="exportToExcel()" class="btn-action bg-slate-700 text-white hover:bg-slate-600 border border-slate-600">Export</button>
+                            <button @click="$refs.fileInput.click()" class="btn-action bg-blue-600 text-white hover:bg-blue-500 border border-blue-400/50">Import</button>
+                            <input type="file" x-ref="fileInput" class="hidden" @change="importFromExcel($event)" accept=".xlsx, .xls">
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse min-w-[700px]">
+                            <thead>
+                                <tr class="text-[10px] font-black text-slate-500 uppercase tracking-tighter border-b border-slate-800">
+                                    <th class="p-4">Key Performance Indicator</th>
+                                    <th class="p-4 text-center">Weight</th>
+                                    <th class="p-4 text-center">Target</th>
+                                    <th class="p-4 text-center">Actual</th>
+                                    <th class="p-4 text-center">Achv</th>
+                                    <th class="p-4 text-center">Score (0-4)</th>
+                                    <th class="p-4 text-right">Result</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-slate-800/50">
+                                <template x-for="item in kpis" :key="item.id">
+                                    <tr class="kpi-row transition-colors">
+                                        <td class="p-4">
+                                            <input type="text" x-model="item.label" @input="debouncedSave()" class="bg-transparent border-none text-xs font-semibold text-slate-200 outline-none w-full">
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <input type="number" x-model="item.weight" @input="updateResult(item)" class="table-input text-xs font-mono">
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <input type="text" x-model="item.target" @input="debouncedSave()" class="table-input text-xs">
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <input type="text" x-model="item.actual" @input="debouncedSave()" class="table-input text-[10px]">
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <input type="number" x-model="item.achv" @input="debouncedSave()" class="table-input text-[10px] bg-slate-800">
+                                        </td>
+                                        <td class="p-4 text-center">
+                                            <input type="number" step="0.01" min="0" max="4" x-model.number="item.score" @input="updateResult(item)" class="table-input text-blue-400 font-bold">
+                                        </td>
+                                        <td class="p-4 text-right text-xs font-black text-emerald-400" x-text="item.result.toFixed(2)"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="glass-card p-6">
+                        <h3 class="text-xs font-bold uppercase text-slate-500 mb-6">Achievement Radar Score</h3>
+                        <div class="h-64"><canvas id="radarChart"></canvas></div>
+                    </div>
+                    <div class="glass-card p-6">
+                        <h3 class="text-xs font-bold uppercase text-slate-500 mb-4">Feedback Atasan</h3>
+                        <div class="bg-slate-900/50 rounded-xl border border-slate-800 focus-within:border-blue-500/50">
+                            <textarea x-model="feedback" @input="debouncedSave()" class="w-full bg-transparent p-4 text-xs text-slate-300 leading-relaxed italic outline-none resize-none" rows="10"></textarea>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="lg:col-span-4 space-y-8">
+                <div class="glass-card p-6 border-t-4 border-emerald-500">
+                    <div class="flex items-center justify-between mb-4">
+                        <h4 class="text-sm font-bold">Next Step & Target</h4>
+                        <button @click="nextSteps.push('Rencana baru...'); debouncedSave()" class="text-emerald-400 hover:text-emerald-300 p-1">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                        </button>
+                    </div>
+                    <ul class="space-y-3">
+                        <template x-for="(step, i) in nextSteps" :key="i">
+                            <li class="flex items-start gap-3 group">
+                                <span class="w-5 h-5 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center text-[10px] font-bold shrink-0 mt-1" x-text="i+1"></span>
+                                <div class="flex-1 flex items-start gap-2">
+                                    <textarea x-model="nextSteps[i]" @input="debouncedSave()" class="flex-1 bg-transparent text-xs text-slate-400 focus:text-slate-200 outline-none resize-none border-b border-transparent focus:border-slate-700 pb-1" rows="2"></textarea>
+                                    <button @click="nextSteps.splice(i, 1); debouncedSave()" class="text-slate-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity p-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+                                    </button>
+                                </div>
+                            </li>
+                        </template>
+                    </ul>
+                </div>
+
+                <div class="glass-card p-6">
+                    <div class="flex justify-between items-end">
+                        <div class="text-center">
+                            <p class="text-[10px] text-slate-500 uppercase font-bold mb-10">TTD USER</p>
+                            <div class="h-[1px] w-24 bg-slate-700 mx-auto"></div>
+                            <p class="text-[10px] font-bold mt-2" x-text="employee.name"></p>
+                        </div>
+                        <div class="text-center">
+                            <p class="text-[10px] text-slate-500 uppercase font-bold mb-10">SUPERVISOR</p>
+                            <div class="h-[1px] w-24 bg-slate-700 mx-auto"></div>
+                            <input type="text" x-model="employee.supervisor" @input="debouncedSave()" class="bg-transparent border-none text-[10px] font-bold mt-2 text-center focus:ring-1 focus:ring-blue-500 rounded outline-none w-32 mx-auto block">
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+        
+        // Firebase Configuration (Injecting environment variables if available)
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {
+            apiKey: "AIzaSyDummyKeyForPreviewMode",
+            authDomain: "performance-app.firebaseapp.com",
+            projectId: "performance-app",
+            storageBucket: "performance-app.appspot.com",
+            messagingSenderId: "12345",
+            appId: "1:12345:web:67890"
+        };
+
+        // Initialize Firebase Compat
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        const auth = firebase.auth();
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'sales-trainer-kpi';
+
+        // Alpine.js Data Function
+        function performanceApp() {
+            return {
+                isLoggedIn: false,
+                isLoading: false,
+                isSaving: false,
+                authMode: 'login',
+                errorMessage: '',
+                authForm: { email: '', password: '' },
+                userId: null,
+                
+                weekLabel: 'Periode W1',
+                employee: { name: "Prasetio", position: "Training Sales Officer", supervisor: "Budiman Wildani" },
+                feedback: "Secara umum, kinerja Training Sales Officer sudah tergolong baik...",
+                nextSteps: [
+                    "Meningkatkan program training berbasis praktik",
+                    "Fokus pada outcome training terhadap aktivitas sales",
+                    "Memperkuat monitoring pasca training"
+                ],
+                kpis: [
+                    { id: 1, label: "% training terlaksana sesuai jadwal", weight: 10, target: "95%", actual: "25%", achv: 100, score: 4.00, result: 0.40 },
+                    { id: 2, label: "% peserta lulus evaluasi training", weight: 15, target: "85%", actual: "85%", achv: 118, score: 4.00, result: 0.60 },
+                    { id: 3, label: "% peningkatan skill sales (closing skill)", weight: 15, target: "70%", actual: "38%", achv: 54, score: 2.00, result: 0.30 },
+                    { id: 4, label: "% peserta menerapkan materi di lapangan", weight: 15, target: "70%", actual: "25%", achv: 125, score: 4.00, result: 0.60 },
+                    { id: 5, label: "% training berdampak ke aktivitas sales", weight: 10, target: "70%", actual: "0%", achv: 0, score: 0.00, result: 0.00 },
+                    { id: 6, label: "% laporan training lengkap", weight: 10, target: "100%", actual: "100%", achv: 100, score: 4.00, result: 0.40 },
+                    { id: 7, label: "% feedback training ditindaklanjuti", weight: 10, target: "80%", actual: "33.33%", achv: 167, score: 4.00, result: 0.40 },
+                    { id: 8, label: "% support coaching sales di lapangan", weight: 15, target: "90%", actual: "25%", achv: 125, score: 4.00, result: 0.60 }
+                ],
+                chartInstance: null,
+                saveTimeout: null,
+
+                get totalScore() {
+                    return this.kpis.reduce((acc, curr) => acc + (parseFloat(curr.result) || 0), 0);
+                },
+
+                getInitials() {
+                    if (!this.employee.name) return '??';
+                    return this.employee.name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2);
+                },
+
+                async initApp() {
+                    // Check for custom tokens
+                    if (typeof __initial_auth_token !== 'undefined') {
+                        try { await auth.signInWithCustomToken(__initial_auth_token); } catch(e) {}
+                    }
+
+                    auth.onAuthStateChanged(async (user) => {
+                        if (user) {
+                            this.userId = user.uid;
+                            this.isLoggedIn = true;
+                            await this.loadData();
+                            this.renderChart();
+                        } else {
+                            this.isLoggedIn = false;
+                        }
+                    });
+                },
+
+                async handleAuth() {
+                    if (!this.authForm.email || !this.authForm.password) {
+                        this.errorMessage = "Harap isi email dan password.";
+                        return;
+                    }
+                    this.isLoading = true;
+                    this.errorMessage = '';
+                    try {
+                        if (this.authMode === 'login') {
+                            await auth.signInWithEmailAndPassword(this.authForm.email, this.authForm.password);
+                        } else {
+                            const res = await auth.createUserWithEmailAndPassword(this.authForm.email, this.authForm.password);
+                            await this.saveData(res.user.uid);
+                        }
+                    } catch (e) {
+                        this.errorMessage = e.message.includes('auth/invalid-credential') || e.message.includes('auth/user-not-found') 
+                                           ? "Email atau password salah." : e.message;
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+
+                async loadData() {
+                    try {
+                        const docRef = db.collection('artifacts').doc(appId).collection('users').doc(this.userId).collection('data').doc('profile');
+                        const docSnap = await docRef.get();
+                        if (docSnap.exists) {
+                            const data = docSnap.data();
+                            this.employee = data.employee || this.employee;
+                            this.kpis = data.kpis || this.kpis;
+                            this.feedback = data.feedback || this.feedback;
+                            this.nextSteps = data.nextSteps || this.nextSteps;
+                            this.weekLabel = data.weekLabel || this.weekLabel;
+                        }
+                    } catch(e) { console.error("Load failed", e); }
+                },
+
+                debouncedSave() {
+                    this.isSaving = true;
+                    if (this.saveTimeout) clearTimeout(this.saveTimeout);
+                    this.saveTimeout = setTimeout(() => this.saveData(), 2000);
+                    if (this.chartInstance) this.renderChart();
+                },
+
+                async saveData(customUid = null) {
+                    const uid = customUid || this.userId;
+                    if (!uid) return;
+                    try {
+                        const docRef = db.collection('artifacts').doc(appId).collection('users').doc(uid).collection('data').doc('profile');
+                        await docRef.set({
+                            employee: this.employee,
+                            kpis: this.kpis,
+                            feedback: this.feedback,
+                            nextSteps: this.nextSteps,
+                            weekLabel: this.weekLabel,
+                            updatedAt: new Date().toISOString()
+                        }, { merge: true });
+                        this.isSaving = false;
+                    } catch (e) {
+                        console.error("Gagal menyimpan:", e);
+                    }
+                },
+
+                async logout() {
+                    await auth.signOut();
+                },
+
+                updateResult(item) {
+                    item.result = (parseFloat(item.score) || 0) * (parseFloat(item.weight) / 100);
+                    this.debouncedSave();
+                },
+
+                renderChart() {
+                    const canvas = document.getElementById('radarChart');
+                    if (!canvas) return;
+                    const ctx = canvas.getContext('2d');
+                    if (this.chartInstance) this.chartInstance.destroy();
+                    this.chartInstance = new Chart(ctx, {
+                        type: 'radar',
+                        data: {
+                            labels: this.kpis.map((k,i) => `KPI ${i+1}`),
+                            datasets: [{
+                                label: 'KPI Score',
+                                data: this.kpis.map(k => k.score),
+                                backgroundColor: 'rgba(59, 130, 246, 0.2)',
+                                borderColor: '#3b82f6',
+                                pointBackgroundColor: '#3b82f6',
+                                borderWidth: 2
+                            }]
+                        },
+                        options: {
+                            responsive: true,
+                            maintainAspectRatio: false,
+                            scales: {
+                                r: {
+                                    angleLines: { color: '#1e293b' },
+                                    grid: { color: '#1e293b' },
+                                    pointLabels: { color: '#64748b', font: { size: 9 } },
+                                    ticks: { display: false },
+                                    suggestedMin: 0,
+                                    suggestedMax: 4
+                                }
+                            },
+                            plugins: { legend: { display: false } }
+                        }
+                    });
+                },
+
+                exportToExcel() {
+                    const data = this.kpis.map(k => ({
+                        'Periode': this.weekLabel,
+                        'KPI': k.label,
+                        'Weight %': k.weight,
+                        'Target': k.target,
+                        'Actual': k.actual,
+                        'Score (0-4)': k.score,
+                        'Result Score': k.result.toFixed(2)
+                    }));
+                    const worksheet = XLSX.utils.json_to_sheet(data);
+                    const workbook = XLSX.utils.book_new();
+                    XLSX.utils.book_append_sheet(workbook, worksheet, "KPI");
+                    XLSX.writeFile(workbook, `KPI_${this.employee.name}_${this.weekLabel}.xlsx`);
+                },
+
+                importFromExcel(event) {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    const reader = new FileReader();
+                    reader.onload = (e) => {
+                        const data = new Uint8Array(e.target.result);
+                        const workbook = XLSX.read(data, { type: 'array' });
+                        const jsonData = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]]);
+                        if (jsonData.length > 0) {
+                            this.kpis = jsonData.map((row, index) => ({
+                                id: index + 1,
+                                label: row['KPI'] || 'N/A',
+                                weight: parseFloat(row['Weight %']) || 0,
+                                target: row['Target'] || '0',
+                                actual: row['Actual'] || '0',
+                                achv: 100,
+                                score: parseFloat(row['Score (0-4)']) || 0,
+                                result: parseFloat(row['Result Score']) || 0
+                            }));
+                            this.debouncedSave();
+                        }
+                    };
+                    reader.readAsArrayBuffer(file);
+                }
+            }
+        }
+    </script>
+</body>
+</html>
